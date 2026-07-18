@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Phixo Companion Platform — Proof of Concept
 
-## Getting Started
+Software companion for **Phixo**, a bedside, sensor-triggered assist-as-needed (AAN)
+rehabilitation device for acute stroke patients in the Day 1–7 neuroplastic window
+(MBA in Healthcare Innovation practicum, Group 7).
 
-First, run the development server:
+**The unmet need:** acute-ward stroke patients receive ~15 assisted repetitions per day,
+against the NICE 2023 guideline of 300–400. This app demonstrates how Phixo's companion
+software closes that gap — no physical device required; a built-in simulator generates
+realistic EMG / force / AAN data.
+
+## What's inside
+
+- **Patient bedside mode** (`/patient`) — tablet-friendly guided sessions with a live
+  EMG intent strip, patient-force vs. device-assistance split, rep counter, daily goal
+  ring, milestones, and safety-guardrail auto-pause. Demo speed controls (1×/4×/10×).
+- **Therapist dashboard** (`/dashboard`) — triage-ordered ward roster (1 therapist :
+  many patients), per-patient recovery charts (assistance falling as patient force
+  rises), protocol editor, safety-alert review, and a print-ready summary report.
+- **Ward data warehouse** (`/dashboard/analytics`) — the compounding-data story:
+  repetitions and sensor data points captured, therapist time multiplied, ward-level
+  recovery curve, and the roadmap (AI Companion, Research Open API).
+- **Device simulator** (`src/lib/simulator/`) — models the five-step Phixo loop
+  (intent detection → processing → deficit calculation → assist-as-needed → log &
+  adapt) with per-patient impairment profiles, day-over-day recovery, in-session
+  fatigue, and spasticity guardrail events. The same engine seeds the demo ward and
+  powers live sessions in the browser.
+
+## Run it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+A SQLite database (`phixo.db`) is created and seeded automatically on first launch with
+six simulated patients across Days 1–7. To regenerate the demo ward:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+rm -f phixo.db* && npm run seed
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Suggested demo flow:** open the dashboard to show the ward → open *Avi Goldman*
+(Day 1, fresh admission) in bedside mode → run a live session at 10× → return to the
+dashboard to show his reps and recovery data flowing in → open a summary report.
 
-## Learn More
+## Stack
 
-To learn more about Next.js, take a look at the following resources:
+Next.js (App Router) · TypeScript · Tailwind CSS + shadcn/ui · Recharts ·
+Drizzle ORM + better-sqlite3.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+> Proof of concept — all patient data is simulated. Not for clinical use.
