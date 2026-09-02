@@ -53,8 +53,8 @@ export default function Home() {
         {[
           {
             step: "1",
-            title: "Intent detection",
-            body: "Surface EMG, force and IMU sensors pick up the patient's attempt to move — even when no visible motion is produced.",
+            title: "Motion detection",
+            body: "An IMU on the limb tracks every movement — when the patient initiates it, how fast, and how far they get on their own.",
           },
           {
             step: "2",

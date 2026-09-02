@@ -43,3 +43,6 @@ next-env.d.ts
 # local demo database
 phixo.db
 phixo.db-*
+
+# local demo database backups
+.db-backup/

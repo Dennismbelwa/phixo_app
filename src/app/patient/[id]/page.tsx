@@ -18,10 +18,10 @@ export default async function PatientHome({ params }: { params: Promise<{ id: st
   const { patient, protocol, day, daily, repsToday, totalReps } = detail;
   const badges = computeBadges(detail);
   const firstName = patient.name.split(" ")[0];
-  const lastForce = daily.at(-1)?.avgPatientForcePct;
-  const firstForce = daily[0]?.avgPatientForcePct;
-  const forceGain =
-    lastForce != null && firstForce != null ? Math.round(lastForce - firstForce) : null;
+  const lastRange = daily.at(-1)?.avgPatientRangePct;
+  const firstRange = daily[0]?.avgPatientRangePct;
+  const rangeGain =
+    lastRange != null && firstRange != null ? Math.round(lastRange - firstRange) : null;
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-6 py-8">
@@ -46,14 +46,19 @@ export default async function PatientHome({ params }: { params: Promise<{ id: st
               : `${protocol.targetRepsPerDay - repsToday} reps to go — you're on your way.`}
         </p>
         <GoalRing value={repsToday} target={protocol.targetRepsPerDay} size={210} sublabel="today" />
-        <Button size="lg" className="h-14 px-10 text-lg" asChild>
-          <Link href={`/patient/${patient.id}/session`}>
-            {repsToday === 0 ? "Start my first session" : "Start a session"}
-          </Link>
-        </Button>
-        {forceGain != null && forceGain > 0 ? (
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button size="lg" className="h-14 px-10 text-lg" asChild>
+            <Link href={`/patient/${patient.id}/session`}>
+              {repsToday === 0 ? "Start my first session" : "Start a session"}
+            </Link>
+          </Button>
+          <Button size="lg" variant="outline" className="h-14 px-8 text-lg" asChild>
+            <Link href={`/patient/${patient.id}/live`}>Connect physical POC</Link>
+          </Button>
+        </div>
+        {rangeGain != null && rangeGain > 0 ? (
           <p className="text-sm font-medium text-chart-2">
-            💪 Your own force is up {forceGain} points since Day 1
+            💪 You are covering {rangeGain} points more of your range since Day 1
           </p>
         ) : null}
       </section>

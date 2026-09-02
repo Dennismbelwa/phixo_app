@@ -83,7 +83,7 @@ const PATIENTS: SeedPatient[] = [
     affectedSide: "right",
     acuteDay: 4,
     severity: "severe",
-    notes: "Dense right hemiplegia. Weak but consistent EMG intent signal from Day 2.",
+    notes: "Dense right hemiplegia. Weak but consistent movement initiation from Day 2.",
     profile: SEVERITY_PROFILES.severe,
     targetRepsPerDay: 300,
     adherence: 0.7,
@@ -154,6 +154,7 @@ export function seedIfEmpty(db: Db): void {
 }
 
 export function seed(db: Db): void {
+  db.delete(schema.samples).run();
   db.delete(schema.reps).run();
   db.delete(schema.safetyEvents).run();
   db.delete(schema.sessions).run();
@@ -242,7 +243,7 @@ export function seed(db: Db): void {
             startedAt: start.toISOString(),
             endedAt: end.toISOString(),
             repCount: sim.repCount,
-            avgPatientForcePct: sim.avgPatientForcePct,
+            avgPatientRangePct: sim.avgPatientRangePct,
             avgAssistPct: sim.avgAssistPct,
             avgQuality: sim.avgQuality,
             avgRomPct: sim.avgRomPct,
@@ -254,8 +255,8 @@ export function seed(db: Db): void {
         const repRows = sim.reps.map((r) => ({
           sessionId,
           tMs: r.tMs,
-          emgPeak: r.emgPeak,
-          patientForcePct: r.patientForcePct,
+          initiationVelDegS: r.initiationVelDegS,
+          patientRangePct: r.patientRangePct,
           assistPct: r.assistPct,
           quality: r.quality,
           romPct: r.romPct,

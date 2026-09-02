@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   createRepStream,
-  emgSample,
+  angleSample,
+  angleVelocity,
   SimulatedRep,
   ImpairmentProfile,
   SAFETY_EVENT_LABELS,
@@ -13,6 +14,8 @@ import {
 } from "@/lib/simulator/engine";
 import { startSession, appendReps, endSession, logSafetyEvent } from "@/lib/actions";
 import { GoalRing } from "@/components/goal-ring";
+import { AngleTrace } from "@/components/angle-trace";
+import type { DeviceSample } from "@/lib/device/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,7 +46,7 @@ interface LiveState {
 const ENCOURAGEMENTS = [
   "Great effort — keep going!",
   "Your brain is rewiring with every rep.",
-  "Strong signal detected — well done!",
+  "Strong movement detected — well done!",
   "Beautiful, controlled movement.",
   "Every repetition counts this week.",
 ];
@@ -75,8 +78,9 @@ export function SessionPlayer(props: SessionPlayerProps) {
   const restUntilRef = useRef(0);
   const currentRepRef = useRef<SimulatedRep | null>(null);
   const completedRef = useRef(0);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const samplesRef = useRef<number[]>([]);
+  // Ring buffer of simulated angle samples, in the same shape the physical POC
+  // produces, so the bedside trace and the real-sensor trace are the same component.
+  const traceRef = useRef<DeviceSample[]>([]);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -201,58 +205,31 @@ export function SessionPlayer(props: SessionPlayerProps) {
     return () => cancelAnimationFrame(rafRef.current);
   }, [phase, flush, props.patientId]);
 
-  // EMG waveform canvas
+  // Feed the shared angle trace. The drawing itself lives in <AngleTrace>; this
+  // only generates the samples the physical POC would otherwise be sending.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
     let raf = 0;
-    const dpr = window.devicePixelRatio || 1;
-
-    const draw = (now: number) => {
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      if (canvas.width !== w * dpr) {
-        canvas.width = w * dpr;
-        canvas.height = h * dpr;
-        ctx.scale(dpr, dpr);
-      }
+    const sample = (now: number) => {
       const rep = currentRepRef.current;
       const running = phaseRef.current === "running";
-      const repPhase = rep && running
-        ? Math.min(1, ((now - repStartRef.current) * speedRef.current) / rep.durationMs)
-        : 0;
-      const intent = rep ? rep.emgPeak : 0;
-      const sample = running ? emgSample(repPhase, intent, now / 1000) : (Math.sin(now / 180) * 0.02);
-      const samples = samplesRef.current;
-      samples.push(sample);
-      if (samples.length > 220) samples.shift();
+      const repPhase =
+        rep && running
+          ? Math.min(1, ((now - repStartRef.current) * speedRef.current) / rep.durationMs)
+          : 0;
+      const romPct = rep && running ? rep.romPct : 0;
 
-      ctx.clearRect(0, 0, w, h);
-      // midline
-      ctx.strokeStyle = "color-mix(in oklab, currentColor 15%, transparent)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, h / 2);
-      ctx.lineTo(w, h / 2);
-      ctx.stroke();
-      // waveform
-      const styles = getComputedStyle(canvas);
-      ctx.strokeStyle = styles.getPropertyValue("--chart-2").trim() || "#3f9e5f";
-      ctx.lineWidth = 2;
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      samples.forEach((v, i) => {
-        const x = (i / 219) * w;
-        const y = h / 2 - v * (h / 2 - 6);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const trace = traceRef.current;
+      trace.push({
+        t: now,
+        angle: angleSample(repPhase, romPct, now / 1000),
+        vel: running && rep ? angleVelocity(repPhase, romPct, rep.durationMs / speedRef.current) : 0,
       });
-      ctx.stroke();
-      raf = requestAnimationFrame(draw);
+      // 30 s at ~60 fps, matching the window AngleTrace draws.
+      if (trace.length > 1800) trace.splice(0, trace.length - 1800);
+
+      raf = requestAnimationFrame(sample);
     };
-    raf = requestAnimationFrame(draw);
+    raf = requestAnimationFrame(sample);
     return () => cancelAnimationFrame(raf);
   }, []);
 
@@ -274,7 +251,7 @@ export function SessionPlayer(props: SessionPlayerProps) {
       : live.repPhase < 0.15
         ? "Try to move your " + (props.affectedSide === "left" ? "left" : "right") + " side"
         : live.repPhase < 0.4
-          ? "Intent detected — keep pushing!"
+          ? "Movement detected — keep pushing!"
           : live.repPhase < 0.9
             ? "Phixo is assisting the movement"
             : "Rep complete!";
@@ -345,7 +322,7 @@ export function SessionPlayer(props: SessionPlayerProps) {
           </p>
           {last ? (
             <p className="text-sm text-muted-foreground">
-              Your own force on the final rep: {Math.round(last.patientForcePct)}%
+              Range you covered yourself on the final rep: {Math.round(last.patientRangePct)}%
             </p>
           ) : null}
           <div className="flex gap-3">
@@ -423,24 +400,28 @@ export function SessionPlayer(props: SessionPlayerProps) {
               <span className="pb-2 text-muted-foreground">reps this session</span>
             </div>
 
-            {/* EMG strip */}
+            {/* Live angle trace — same component the physical POC drives */}
             <div>
               <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block size-2 rounded-full bg-chart-2" aria-hidden />
-                  Muscle signal (EMG) — your intent
+                  Elbow angle — your movement
                 </span>
                 <span className={cn("transition-opacity", live.repPhase > 0.1 && live.repPhase < 0.9 ? "opacity-100" : "opacity-0")}>
                   ● live
                 </span>
               </div>
-              <canvas ref={canvasRef} className="h-24 w-full rounded-md border bg-card" />
+              <AngleTrace
+                traceRef={traceRef}
+                live={phase === "running"}
+                className="h-24 w-full rounded-md border bg-card"
+              />
             </div>
 
-            {/* Effort split for current rep */}
+            {/* Movement split for current rep */}
             <div>
               <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                <span>Your force</span>
+                <span>Your movement</span>
                 <span>Phixo assistance</span>
               </div>
               <div
@@ -448,13 +429,13 @@ export function SessionPlayer(props: SessionPlayerProps) {
                 role="img"
                 aria-label={
                   rep
-                    ? `You ${Math.round(rep.patientForcePct)}%, device ${Math.round(rep.assistPct)}%`
+                    ? `You ${Math.round(rep.patientRangePct)}%, device ${Math.round(rep.assistPct)}%`
                     : "waiting"
                 }
               >
                 <div
                   className="bg-chart-2 transition-all duration-300"
-                  style={{ width: `${rep && inAssist ? rep.patientForcePct : rep ? Math.min(rep.patientForcePct, live.repPhase * 250) : 0}%` }}
+                  style={{ width: `${rep && inAssist ? rep.patientRangePct : rep ? Math.min(rep.patientRangePct, live.repPhase * 250) : 0}%` }}
                 />
                 <div className="w-0.5 bg-background" aria-hidden />
                 <div
@@ -463,7 +444,7 @@ export function SessionPlayer(props: SessionPlayerProps) {
                 />
               </div>
               <div className="mt-1 flex justify-between text-sm font-medium tabular-nums">
-                <span className="text-chart-2">{rep && inAssist ? `${Math.round(rep.patientForcePct)}%` : "—"}</span>
+                <span className="text-chart-2">{rep && inAssist ? `${Math.round(rep.patientRangePct)}%` : "—"}</span>
                 <span className="text-chart-1">{rep && inAssist ? `${Math.round(rep.assistPct)}%` : "—"}</span>
               </div>
             </div>
@@ -519,9 +500,9 @@ export function SessionPlayer(props: SessionPlayerProps) {
                   </span>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
-                  <span>Your force</span>
+                  <span>Your movement</span>
                   <span className="font-medium tabular-nums text-foreground">
-                    {Math.round(live.lastCompleted.patientForcePct)}%
+                    {Math.round(live.lastCompleted.patientRangePct)}%
                   </span>
                 </div>
               </CardContent>

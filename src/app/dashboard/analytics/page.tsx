@@ -49,7 +49,7 @@ export default function AnalyticsPage() {
           {
             label: "Sensor data points",
             value: a.dataPoints.toLocaleString(),
-            sub: "EMG · force · assist · quality · ROM · timing",
+            sub: "angle · range · velocity · assist · quality · timing",
           },
           {
             label: "Therapist time multiplied",
@@ -102,7 +102,7 @@ export default function AnalyticsPage() {
             {
               tag: "Live",
               title: "Protocol tuning",
-              body: "Assistance ceilings and rep targets adjusted per patient from observed force and fatigue curves.",
+              body: "Assistance ceilings and rep targets adjusted per patient from observed range and fatigue curves.",
             },
             {
               tag: "Year 6+",

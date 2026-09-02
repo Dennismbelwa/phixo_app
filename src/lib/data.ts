@@ -1,7 +1,9 @@
 import "server-only";
-import { db, patients, protocols, sessions, reps, safetyEvents } from "@/db";
+import { db, patients, protocols, sessions, reps, safetyEvents, samples } from "@/db";
 import type { Patient, Protocol, Session, SafetyEvent } from "@/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import type { DetectedRep, DeviceSample } from "@/lib/device/types";
+import { summarizeReps, type SessionMetrics } from "@/lib/device/metrics";
+import { eq, and, asc, desc, sql } from "drizzle-orm";
 
 export function acuteDay(admissionDate: string): number {
   const admitted = new Date(admissionDate + "T00:00:00");
@@ -86,7 +88,7 @@ export interface DailyAggregate {
   day: number;
   reps: number;
   avgAssistPct: number | null;
-  avgPatientForcePct: number | null;
+  avgPatientRangePct: number | null;
   avgQuality: number | null;
 }
 
@@ -140,7 +142,7 @@ export function getPatientDetail(id: string): PatientDetail | null {
         day: dayN,
         reps: repsN,
         avgAssistPct: wavg((s) => s.avgAssistPct),
-        avgPatientForcePct: wavg((s) => s.avgPatientForcePct),
+        avgPatientRangePct: wavg((s) => s.avgPatientRangePct),
         avgQuality: wavg((s) => s.avgQuality),
       };
     })
@@ -164,7 +166,7 @@ export function getPatientDetail(id: string): PatientDetail | null {
 
 export interface SessionDetail {
   session: Session;
-  repRows: { tMs: number; patientForcePct: number; assistPct: number; quality: number }[];
+  repRows: { tMs: number; patientRangePct: number; assistPct: number; quality: number }[];
 }
 
 export function getSessionReps(sessionId: string) {
@@ -240,7 +242,8 @@ export function getWardAnalytics(): WardAnalytics {
     totalReps,
     totalSessions: allSessions.length,
     totalPatients: allPatients.length,
-    // rep row: EMG, force, assist, quality, ROM, duration + timestamp ≈ 7 signals
+    // rep row: initiation velocity, patient range, assist, quality, ROM,
+    // duration + timestamp ≈ 7 signals
     dataPoints: totalReps * 7,
     therapistSessionsEquivalent: Math.round(totalReps / 15),
     safetyEvents: safetyCount,
@@ -261,9 +264,9 @@ export interface BadgeInfo {
 export function computeBadges(detail: PatientDetail): BadgeInfo[] {
   const { daily, totalReps, repsToday, protocol } = detail;
   const daysAtTarget = daily.filter((d) => d.reps >= protocol.targetRepsPerDay).length;
-  const forceTrend =
+  const rangeTrend =
     daily.length >= 2 &&
-    (daily.at(-1)!.avgPatientForcePct ?? 0) > (daily[0].avgPatientForcePct ?? 0);
+    (daily.at(-1)!.avgPatientRangePct ?? 0) > (daily[0].avgPatientRangePct ?? 0);
   return [
     {
       id: "first-session",
@@ -297,8 +300,8 @@ export function computeBadges(detail: PatientDetail): BadgeInfo[] {
       id: "getting-stronger",
       label: "Getting stronger",
       emoji: "💪",
-      earned: forceTrend,
-      description: "Your own force is trending up",
+      earned: rangeTrend,
+      description: "Your own movement range is growing",
     },
     {
       id: "today-200",
@@ -308,4 +311,128 @@ export function computeBadges(detail: PatientDetail): BadgeInfo[] {
       description: "200+ reps in a single day",
     },
   ];
+}
+
+/* ------------------------------------------------------------------------- *
+ * Physical POC sessions
+ * ------------------------------------------------------------------------- */
+
+export interface DeviceSessionDetail {
+  session: Session;
+  patient: Patient;
+  reps: DetectedRep[];
+  metrics: SessionMetrics;
+  /** angle trace, thinned for charting */
+  trace: DeviceSample[];
+  totalSamples: number;
+  /** rate actually achieved over the run, Hz */
+  measuredRateHz: number;
+}
+
+/** Points kept for the post-session angle chart — enough shape, cheap to render. */
+const TRACE_CHART_POINTS = 1200;
+
+export function getDeviceSessionDetail(sessionId: string): DeviceSessionDetail | null {
+  const session = db.select().from(sessions).where(eq(sessions.id, sessionId)).all()[0];
+  if (!session) return null;
+  const patient = db.select().from(patients).where(eq(patients.id, session.patientId)).all()[0];
+  if (!patient) return null;
+
+  const repRows = db
+    .select()
+    .from(reps)
+    .where(eq(reps.sessionId, sessionId))
+    .orderBy(asc(reps.tMs))
+    .all();
+
+  // The assist columns are NOT NULL, so a session recorded against firmware
+  // without motor telemetry stores 0. Only assistMeasured distinguishes that
+  // from a genuinely unassisted repetition, so honour it here rather than
+  // letting a placeholder zero reach the charts as a real reading.
+  const assistMeasured = session.assistMeasured === 1;
+  const detected: DetectedRep[] = repRows.map((r, i) => ({
+    index: i + 1,
+    tMs: r.tMs,
+    durationMs: r.durationMs,
+    maxFlexionDeg: r.maxFlexionDeg ?? 0,
+    maxExtensionDeg: r.maxExtensionDeg ?? 0,
+    romDeg: r.romDeg ?? 0,
+    peakFlexionVelDegS: r.peakVelocityDegS ?? 0,
+    peakExtensionVelDegS: r.peakVelocityDegS ?? 0,
+    smoothness: r.smoothness ?? 0,
+    quality: r.quality,
+    assistPct: assistMeasured ? r.assistPct : null,
+    patientRangePct: assistMeasured ? r.patientRangePct : null,
+  }));
+
+  const sampleRows = db
+    .select()
+    .from(samples)
+    .where(eq(samples.sessionId, sessionId))
+    .orderBy(asc(samples.tMs))
+    .all();
+
+  // Even stride rather than a window average: preserving the true peaks and
+  // troughs matters more here than smoothing, because the chart is evidence.
+  const stride = Math.max(1, Math.ceil(sampleRows.length / TRACE_CHART_POINTS));
+  const trace: DeviceSample[] = sampleRows
+    .filter((_, i) => i % stride === 0)
+    .map((s) => ({ t: s.tMs, angle: s.angleDeg, vel: s.velocityDegS }));
+
+  const spanMs =
+    sampleRows.length > 1 ? sampleRows[sampleRows.length - 1].tMs - sampleRows[0].tMs : 0;
+
+  return {
+    session,
+    patient,
+    reps: detected,
+    metrics: summarizeReps(detected),
+    trace,
+    totalSamples: sampleRows.length,
+    measuredRateHz: spanMs > 0 ? Math.round((sampleRows.length - 1) / (spanMs / 1000)) : 0,
+  };
+}
+
+export interface LimbComparison {
+  affected: SessionMetrics | null;
+  unaffected: SessionMetrics | null;
+  /** affected ROM as a percentage of unaffected ROM */
+  symmetryIndex: number | null;
+}
+
+/**
+ * Compare the patient's most recent instrumented run on each limb. The
+ * unaffected side is the patient's own reference, which is a far stronger
+ * baseline than a population norm.
+ */
+export function getLimbComparison(patientId: string): LimbComparison {
+  const metricsFor = (limb: "affected" | "unaffected"): SessionMetrics | null => {
+    const row = db
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.patientId, patientId),
+          eq(sessions.source, "device"),
+          eq(sessions.limb, limb),
+        ),
+      )
+      .orderBy(desc(sessions.startedAt))
+      .limit(1)
+      .all()[0];
+    if (!row) return null;
+    const detail = getDeviceSessionDetail(row.id);
+    return detail && detail.reps.length > 0 ? detail.metrics : null;
+  };
+
+  const affected = metricsFor("affected");
+  const unaffected = metricsFor("unaffected");
+  return {
+    affected,
+    unaffected,
+    symmetryIndex:
+      affected && unaffected && unaffected.totalRomDeg > 0
+        ? Math.round((affected.totalRomDeg / unaffected.totalRomDeg) * 1000) / 10
+        : null,
+  };
 }

@@ -69,7 +69,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               <TableHead>Acute day</TableHead>
               <TableHead className="text-right">Repetitions</TableHead>
               <TableHead className="text-right">% of target</TableHead>
-              <TableHead className="text-right">Patient force</TableHead>
+              <TableHead className="text-right">Patient range</TableHead>
               <TableHead className="text-right">Device assist</TableHead>
               <TableHead className="text-right">Quality</TableHead>
             </TableRow>
@@ -83,7 +83,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                   {Math.round((d.reps / protocol.targetRepsPerDay) * 100)}%
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {d.avgPatientForcePct != null ? `${Math.round(d.avgPatientForcePct)}%` : "—"}
+                  {d.avgPatientRangePct != null ? `${Math.round(d.avgPatientRangePct)}%` : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {d.avgAssistPct != null ? `${Math.round(d.avgAssistPct)}%` : "—"}
@@ -105,10 +105,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           {firstDay && lastDay && firstDay !== lastDay && firstDay.avgAssistPct != null && lastDay.avgAssistPct != null
             ? `Device assistance decreased from ${Math.round(firstDay.avgAssistPct)}% to ${Math.round(
                 lastDay.avgAssistPct
-              )}% while patient-generated force rose from ${Math.round(
-                firstDay.avgPatientForcePct ?? 0
+              )}% while patient-driven range rose from ${Math.round(
+                firstDay.avgPatientRangePct ?? 0
               )}% to ${Math.round(
-                lastDay.avgPatientForcePct ?? 0
+                lastDay.avgPatientRangePct ?? 0
               )}%, consistent with early motor recovery. `
             : ""}
           {alerts.length > 0

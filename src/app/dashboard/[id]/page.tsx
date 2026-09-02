@@ -148,7 +148,7 @@ export default async function PatientDetailPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Recovery signal — patient force vs. device assistance
+              Recovery signal — patient-driven range vs. device assistance
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -195,10 +195,30 @@ export default async function PatientDetailPage({
                         <span className="ml-1 text-xs text-muted-foreground">(family)</span>
                       ) : null}
                     </TableCell>
-                    <TableCell className="text-sm">{exerciseName(s.exerciseId)}</TableCell>
+                    <TableCell className="text-sm">
+                      {exerciseName(s.exerciseId)}
+                      {s.source === "device" && (
+                        <Link
+                          href={`/dashboard/${patient.id}/session/${s.id}`}
+                          className="ml-2 inline-flex"
+                        >
+                          <Badge
+                            variant="outline"
+                            className="border-[var(--chart-2)]/40 text-[var(--chart-2)] hover:bg-[var(--chart-2)]/10"
+                          >
+                            POC
+                          </Badge>
+                        </Link>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{s.repCount}</TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {Math.round(s.avgAssistPct)}%
+                      {/* The rig is motor-driven, so there is no patient contribution to split out. */}
+                      {s.source === "device" ? (
+                        <span className="text-muted-foreground">n/a</span>
+                      ) : (
+                        `${Math.round(s.avgAssistPct)}%`
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {Math.round(s.avgQuality)}

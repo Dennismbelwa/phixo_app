@@ -89,7 +89,7 @@ export function DailyRepsChart({
 
 /**
  * The key clinical signal: motor assistance falling while the patient's own
- * force rises day over day.
+ * patient-driven range rises day over day.
  */
 export function EffortChart({
   daily,
@@ -100,7 +100,7 @@ export function EffortChart({
 }) {
   const data = daily.map((d) => ({
     day: d.day,
-    "Patient force": d.avgPatientForcePct ?? 0,
+    "Patient-driven range": d.avgPatientRangePct ?? 0,
     "Device assistance": d.avgAssistPct ?? 0,
   }));
   return (
@@ -117,7 +117,7 @@ export function EffortChart({
         />
         <Line
           type="monotone"
-          dataKey="Patient force"
+          dataKey="Patient-driven range"
           stroke="var(--chart-2)"
           strokeWidth={2}
           dot={{ r: 3, strokeWidth: 0, fill: "var(--chart-2)" }}
