@@ -13,7 +13,7 @@ import type { DetectorState } from "@/lib/device/rep-detector";
 /** Whole degrees, with negative zero normalised. */
 const deg = (v: number) => `${Math.round(v) || 0}°`;
 
-function Tile({
+export function Tile({
   label,
   value,
   sub,

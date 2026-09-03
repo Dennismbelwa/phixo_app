@@ -75,6 +75,12 @@ export function DeviceStatusChip({ status }: { status: DeviceStatus }) {
         </Badge>
       )}
 
+      {status.protocol === "bench" && (
+        <Badge variant="outline" className="border-[var(--chart-3)]/40 font-medium text-[var(--chart-3)]">
+          Bench firmware · raw telemetry only, not clinical
+        </Badge>
+      )}
+
       {live && (
         <span className="font-mono text-xs text-muted-foreground">
           {status.rateHz} Hz · {status.samples.toLocaleString()} samples

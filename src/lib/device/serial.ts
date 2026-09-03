@@ -15,9 +15,20 @@ import type {
   AngleSource,
   AngleSourceHandlers,
   DeviceCommand,
+  DeviceProtocol,
 } from "./types";
 
-export const BAUD_RATE = 115200;
+/**
+ * Matches whatever board is actually on the bench right now, which is running
+ * the experimental servo-assist sketch (9600) — not the documented
+ * phixo_poc.ino (115200, see hardware/phixo_poc/phixo_poc.ino). If that
+ * sketch gets reflashed, this needs to flip back to 115200.
+ */
+export const BAUD_RATE = 9600;
+
+/** `D,` state words used by the bench (servo-assist) sketch's 5th field, in
+ * place of phixo_poc.ino's numeric `motorActive`. */
+const BENCH_STATES = new Set(["IDLE", "MOVING", "ASSIST", "TARGET"]);
 
 /* Minimal ambient declarations for the Web Serial API. Declared here rather than
  * pulling in @types/w3c-web-serial to keep the project dependency-free. */
@@ -215,6 +226,19 @@ function createSerialSource(port: SerialPortLike): AngleSource {
   let calibrating = false;
   /** true once the board has zeroed, so the same connection does not redo it */
   let calibrated = false;
+  /** learned from the first `D,` line; the bench sketch never answers `Z`/`S` */
+  let protocol: DeviceProtocol | null = null;
+  /** Returns true the first time a given protocol is learned, false on repeats. */
+  function onProtocolDetected(p: DeviceProtocol): boolean {
+    if (protocol) return false;
+    protocol = p;
+    if (p === "bench") {
+      log("bench protocol detected (state-word D lines) — this is the",
+          "experimental servo-assist sketch, not phixo_poc.ino. Skipping the",
+          "Z zero handshake: this firmware has no extension reference.");
+    }
+    return true;
+  }
   const encoder = new TextEncoder();
   const stats: TraceStats = {
     bytes: 0, lines: 0, samples: 0, malformed: 0,
@@ -289,6 +313,10 @@ function createSerialSource(port: SerialPortLike): AngleSource {
       const decoder = new TextDecoder();
       let buffer = "";
 
+      const reportProtocol = (p: DeviceProtocol) => {
+        if (onProtocolDetected(p)) handlers.onStatus({ protocol: p });
+      };
+
       // Read loop runs detached; it ends when the reader is cancelled by stop()
       // or when the cable is pulled, which surfaces as a stream error.
       void (async () => {
@@ -313,7 +341,7 @@ function createSerialSource(port: SerialPortLike): AngleSource {
             while ((nl = buffer.indexOf("\n")) >= 0) {
               const line = buffer.slice(0, nl).trim();
               buffer = buffer.slice(nl + 1);
-              if (line) parseLine(line, handlers, stats, onCalibrationResult);
+              if (line) parseLine(line, handlers, stats, onCalibrationResult, reportProtocol);
             }
             // A device that never sends a newline must not grow the buffer forever.
             if (buffer.length > 4096) {
@@ -353,7 +381,7 @@ function createSerialSource(port: SerialPortLike): AngleSource {
         // state it found. Zero first and streaming would stay off.
         if (stats.samples > 0) {
           clearInterval(rearm);
-          void zeroAtExtension(handlers);
+          if (protocol === "clinical") void zeroAtExtension(handlers);
           return;
         }
         if (waited > START_RETRY_LIMIT_MS) {
@@ -362,7 +390,8 @@ function createSerialSource(port: SerialPortLike): AngleSource {
             Math.round(START_RETRY_LIMIT_MS / START_RETRY_MS)} attempts at S.`,
             stats.bytes > 0
               ? "The board is talking but not streaming — is the IMU still wired? Check for an E, line."
-              : "Nothing has arrived at all — check that phixo_poc.ino is flashed.");
+              : "Nothing has arrived at all — check that the right sketch is flashed, and",
+                "if it's the bench servo-assist sketch, that its physical start button has been pressed.");
           return;
         }
         log(`no telemetry yet after ${Math.round(waited)} ms — resending S`,
@@ -410,20 +439,53 @@ function parseLine(
   handlers: AngleSourceHandlers,
   stats: TraceStats,
   onCalibrationResult: (ok: boolean) => void,
+  onProtocolDetected: (p: DeviceProtocol) => void,
 ): void {
   const parts = line.split(",");
   stats.lines += 1;
 
   if (parts[0] === "D" && parts.length >= 4) {
     const t = Number(parts[1]);
-    const angle = Number(parts[2]);
-    const vel = Number(parts[3]);
+    const field2 = Number(parts[2]);
+    const field3 = Number(parts[3]);
+    const field5 = parts.length >= 5 ? parts[4].trim() : "";
+
+    // The bench (servo-assist) sketch's 5th field is a state word, not the
+    // documented protocol's numeric motor flag — that's how a board's actual
+    // firmware is told apart from the one AGENTS.md describes.
+    if (BENCH_STATES.has(field5)) {
+      if (Number.isFinite(t) && Number.isFinite(field2) && Number.isFinite(field3)) {
+        stats.samples += 1;
+        onProtocolDetected("bench");
+        if (stats.samples <= VERBATIM_SAMPLES || verboseEnabled()) {
+          log(`← D sample #${stats.samples} [bench]: t=${t} ms  servoPos=${field2}  pathDeg=${field3}  state=${field5}`);
+          if (stats.samples === VERBATIM_SAMPLES && !verboseEnabled()) {
+            log(`…further samples summarised every ${SUMMARY_MS / 1000} s.`,
+                'For every line: localStorage.phixoDebug = "verbose", then reconnect.');
+          }
+        } else {
+          summarise(stats, field2, field3);
+        }
+        handlers.onSample({
+          t, angle: field2, vel: 0,
+          bench: { servoPos: field2, pathDeg: field3, state: field5 as "IDLE" | "MOVING" | "ASSIST" | "TARGET" },
+        });
+      } else {
+        stats.malformed += 1;
+        warn(`D line with non-numeric fields (dropped): ${JSON.stringify(line)}`);
+      }
+      return;
+    }
+
+    const angle = field2;
+    const vel = field3;
     // Fifth field is motor state, added when the rig became patient-driven.
     // Absent on older firmware, and absence must stay distinct from "0": one
     // means assistance was not measured, the other that none was given.
-    const motorActive = parts.length >= 5 ? parts[4].trim() === "1" : undefined;
+    const motorActive = parts.length >= 5 ? field5 === "1" : undefined;
     if (Number.isFinite(t) && Number.isFinite(angle) && Number.isFinite(vel)) {
       stats.samples += 1;
+      onProtocolDetected("clinical");
       // 50 Hz would drown the console, so: every line while you are still
       // checking that it works, then a rate summary once it plainly does.
       if (stats.samples <= VERBATIM_SAMPLES || verboseEnabled()) {

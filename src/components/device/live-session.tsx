@@ -19,6 +19,7 @@ import { DeviceStatusChip } from "./device-status-chip";
 import { AngleTrace } from "@/components/angle-trace";
 import { ArmFigure } from "./arm-figure";
 import { LiveMetricTiles } from "./live-metric-tiles";
+import { BenchMetricTiles } from "./bench-metric-tiles";
 import { RepTable } from "./rep-table";
 import { requestSerialSource, isSerialSupported, SerialConnectionError } from "@/lib/device/serial";
 import { createMockSource } from "@/lib/device/mock-source";
@@ -76,6 +77,15 @@ export function LiveSession(props: LiveSessionProps) {
 
   const { status, metrics, recording } = device;
   const live = status.connected && status.signal !== "lost";
+  // Protocol is learned from the first `D,` line and resets to unknown on
+  // every connect() — and the bench sketch only sends that line once its
+  // physical button is pressed, which can be well after the port opens.
+  // For this demo period the board on the bench is the bench sketch, so
+  // default to its layout (rep counter included) for the whole time a real
+  // port is connected, rather than dropping to a "waiting" placeholder or
+  // the clinical layout until data proves it. Only a confirmed clinical `D,`
+  // line switches this back.
+  const bench = status.mode === "device" && status.protocol !== "clinical";
 
   const connectDevice = useCallback(async () => {
     setConnecting(true);
@@ -162,6 +172,14 @@ export function LiveSession(props: LiveSessionProps) {
         </p>
       )}
 
+      {bench && (
+        <p className="rounded-lg border border-[var(--chart-3)]/40 bg-[var(--chart-3)]/10 px-4 py-3 text-sm">
+          This board is running the bench servo-assist sketch, not the documented phixo_poc.ino —
+          the numbers below are raw servo position and gyro path, not a clinical elbow angle.
+          Session recording is disabled while connected to it.
+        </p>
+      )}
+
       {/* ---- setup / run controls ---- */}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-4">
@@ -196,7 +214,7 @@ export function LiveSession(props: LiveSessionProps) {
 
           <div className="ml-auto flex items-center gap-2">
             {!recording ? (
-              <Button size="lg" onClick={() => device.beginRecording()} disabled={!live}>
+              <Button size="lg" onClick={() => device.beginRecording()} disabled={!live || bench}>
                 <Play className="size-4" />
                 Start session
               </Button>
@@ -211,36 +229,54 @@ export function LiveSession(props: LiveSessionProps) {
       </Card>
 
       {/* ---- live readout ---- */}
-      <Card>
-        <CardContent className="flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
-          <ArmFigure angleRef={device.angleRef} className="h-32 w-48 text-foreground" />
-          <div className="text-center">
+      {bench ? (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-2 text-center">
             <p className="font-mono text-6xl font-semibold tabular-nums text-[var(--chart-2)]">
-              {device.angle.toFixed(0)}°
+              {device.bench?.servoPos.toFixed(0) ?? "—"}
             </p>
-            <p className="mt-1 text-sm text-muted-foreground">Live elbow angle</p>
-            {recording && (
-              <Badge variant="outline" className="mt-2 border-[var(--chart-2)]/40 text-[var(--chart-2)]">
-                <Activity className="size-3" /> Recording
-              </Badge>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+            <p className="text-sm text-muted-foreground">Servo position (raw)</p>
+            <Badge variant="outline" className="mt-1 font-mono">
+              {device.bench?.state ?? "—"}
+            </Badge>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
+            <ArmFigure angleRef={device.angleRef} className="h-32 w-48 text-foreground" />
+            <div className="text-center">
+              <p className="font-mono text-6xl font-semibold tabular-nums text-[var(--chart-2)]">
+                {device.angle.toFixed(0)}°
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">Live elbow angle</p>
+              {recording && (
+                <Badge variant="outline" className="mt-2 border-[var(--chart-2)]/40 text-[var(--chart-2)]">
+                  <Activity className="size-3" /> Recording
+                </Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-      <LiveMetricTiles
-        angle={device.angle}
-        metrics={metrics}
-        detector={device.detector}
-        recording={recording}
-        guidelineReps={props.guidelineReps}
-      />
+      {bench ? (
+        <BenchMetricTiles bench={device.bench} benchReps={device.benchReps} />
+      ) : (
+        <LiveMetricTiles
+          angle={device.angle}
+          metrics={metrics}
+          detector={device.detector}
+          recording={recording}
+          guidelineReps={props.guidelineReps}
+        />
+      )}
 
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-base">
             <Ruler className="size-4 text-muted-foreground" />
-            Elbow angle over time
+            {bench ? "Servo position over time (raw)" : "Elbow angle over time"}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -248,24 +284,26 @@ export function LiveSession(props: LiveSessionProps) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base">Repetition analysis</CardTitle>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            {device.detector.rejected > 0 && (
-              <span className="flex items-center gap-1">
-                <RotateCcw className="size-3" />
-                {device.detector.rejected} cycle
-                {device.detector.rejected === 1 ? "" : "s"} rejected
-              </span>
-            )}
-            <span>Last 10 of {metrics.repCount}</span>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <RepTable reps={device.reps} limit={10} />
-        </CardContent>
-      </Card>
+      {!bench && (
+        <Card>
+          <CardHeader className="flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base">Repetition analysis</CardTitle>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              {device.detector.rejected > 0 && (
+                <span className="flex items-center gap-1">
+                  <RotateCcw className="size-3" />
+                  {device.detector.rejected} cycle
+                  {device.detector.rejected === 1 ? "" : "s"} rejected
+                </span>
+              )}
+              <span>Last 10 of {metrics.repCount}</span>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <RepTable reps={device.reps} limit={10} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

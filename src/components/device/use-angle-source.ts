@@ -39,6 +39,10 @@ export interface UseAngleSource {
   status: DeviceStatus;
   /** most recent angle, throttled for display, degrees */
   angle: number;
+  /** most recent bench-protocol reading, throttled for display; null off a clinical board */
+  bench: DeviceSample["bench"] | null;
+  /** MOVING-episode count on a bench-protocol board; meaningless off one */
+  benchReps: number;
   reps: DetectedRep[];
   metrics: SessionMetrics;
   detector: DetectorState;
@@ -67,6 +71,11 @@ export interface UseAngleSourceOptions {
 export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
   const [status, setStatus] = useState<DeviceStatus>(IDLE_STATUS);
   const [angle, setAngle] = useState(0);
+  const [bench, setBench] = useState<DeviceSample["bench"] | null>(null);
+  /** Count of MOVING episodes on a bench-protocol board — its own thing, not
+   * run through rep-detector.ts, which needs a signed clinical angle this
+   * protocol doesn't have. */
+  const [benchReps, setBenchReps] = useState(0);
   const [reps, setReps] = useState<DetectedRep[]>([]);
   const [metrics, setMetrics] = useState<SessionMetrics>(EMPTY_METRICS);
   const [detector, setDetector] = useState<DetectorState>({
@@ -79,6 +88,8 @@ export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
   const detectorRef = useRef<RepDetector | null>(null);
   const traceRef = useRef<DeviceSample[]>([]);
   const angleRef = useRef(0);
+  const benchRef = useRef<DeviceSample["bench"] | null>(null);
+  const benchPrevStateRef = useRef<string | null>(null);
   const statusRef = useRef<DeviceStatus>(IDLE_STATUS);
   const recordingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
@@ -140,6 +151,16 @@ export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
   const handleSample = useCallback(
     (s: DeviceSample) => {
       angleRef.current = s.angle;
+      if (s.bench) {
+        benchRef.current = s.bench;
+        // A rep is one MOVING episode — the rising edge into it, so a long
+        // hold inside MOVING only counts once. Rare enough (~0.5 Hz, same as
+        // the clinical detector) to be plain state rather than a poll.
+        if (s.bench.state === "MOVING" && benchPrevStateRef.current !== "MOVING") {
+          setBenchReps((n) => n + 1);
+        }
+        benchPrevStateRef.current = s.bench.state;
+      }
 
       const trace = traceRef.current;
       trace.push(s);
@@ -160,6 +181,11 @@ export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
         signal: "stable",
         connected: true,
       };
+
+      // A bench-protocol board's "angle" is a raw servo pulse position with no
+      // extension reference, not a clinical elbow angle — feeding it to the
+      // rep detector would just manufacture nonsense reps and rejections.
+      if (statusRef.current.protocol === "bench") return;
 
       // Detect always, record conditionally. The detector's envelope is what
       // drives the live range readouts, so gating the push on `recording` left
@@ -199,6 +225,10 @@ export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
       await sourceRef.current?.stop();
       traceRef.current = [];
       rateWindowRef.current = [];
+      benchRef.current = null;
+      benchPrevStateRef.current = null;
+      setBench(null);
+      setBenchReps(0);
       sourceRef.current = source;
       detectorRef.current = createRepDetector();
       statusRef.current = { ...IDLE_STATUS, mode: source.mode };
@@ -247,6 +277,7 @@ export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
   useEffect(() => {
     const timer = setInterval(() => {
       setAngle(angleRef.current);
+      setBench(benchRef.current);
       const ds = detectorRef.current?.state;
       setDetector(
         ds
@@ -290,7 +321,7 @@ export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
   }, [flush]);
 
   return {
-    status, angle, reps, metrics, detector, traceRef, angleRef,
+    status, angle, bench, benchReps, reps, metrics, detector, traceRef, angleRef,
     recording, sessionId, connect, disconnect, send, beginRecording, endRecording,
   };
 }
