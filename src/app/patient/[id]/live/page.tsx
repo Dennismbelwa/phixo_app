@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Real-sensor mode: the bedside session driven by the physical POC over USB.
- * Deliberately a separate route from /session so the simulated bedside player
- * is never at risk during a presentation.
+ * /session now renders this same flow — kept here too as an unchanged,
+ * identically-wired duplicate route.
  */
 export default async function LiveSessionPage({
   params,

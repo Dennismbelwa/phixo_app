@@ -309,9 +309,17 @@ export function useAngleSource(options: UseAngleSourceOptions): UseAngleSource {
     return () => clearInterval(timer);
   }, []);
 
-  // Don't lose the tail of a session if the tab is closed mid-run.
+  // Don't lose the tail of a session if the tab is closed mid-run. Must also
+  // release the port here, not just in the effect cleanup below: a real tab
+  // close or hard refresh tears down the JS realm before React reliably runs
+  // unmount cleanup, so port.close() would never fire and Chrome would hold
+  // the OS-level port open — which then fails every future open() attempt,
+  // from any tab, with a bare NetworkError until the USB cable is replugged.
   useEffect(() => {
-    const onHide = () => void flush();
+    const onHide = () => {
+      void flush();
+      void sourceRef.current?.stop();
+    };
     window.addEventListener("pagehide", onHide);
     return () => {
       window.removeEventListener("pagehide", onHide);

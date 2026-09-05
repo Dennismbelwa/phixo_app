@@ -52,9 +52,6 @@ export default async function PatientHome({ params }: { params: Promise<{ id: st
               {repsToday === 0 ? "Start my first session" : "Start a session"}
             </Link>
           </Button>
-          <Button size="lg" variant="outline" className="h-14 px-8 text-lg" asChild>
-            <Link href={`/patient/${patient.id}/live`}>Connect physical POC</Link>
-          </Button>
         </div>
         {rangeGain != null && rangeGain > 0 ? (
           <p className="text-sm font-medium text-chart-2">
